@@ -1,0 +1,88 @@
+
+name: Build GM TIS2000 APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Extract updated Android source ZIP
+        run: |
+          set -eu
+          ZIP_FILE="GM_Powertrain_Diagnostics_Source.zip"
+
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "ERROR: $ZIP_FILE was not found in the repository root."
+            echo "Check that the ZIP filename matches exactly."
+            exit 1
+          fi
+
+          rm -rf extracted
+          mkdir -p extracted
+          unzip -o "$ZIP_FILE" -d extracted
+
+      - name: Find Android project
+        run: |
+          set -eu
+
+          PROJECT_FILE="$(find extracted -type f \
+            \( -name settings.gradle -o -name settings.gradle.kts \) \
+            -print -quit)"
+
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "ERROR: No settings.gradle or settings.gradle.kts found."
+            echo "The ZIP may not contain a complete Android project."
+            echo "Files extracted:"
+            find extracted -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Android project found at: $PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build debug APK
+        run: |
+          set -eu
+          gradle --no-daemon \
+            -p "$PROJECT_DIR" \
+            assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GM-TIS2000-debug-APK
+          path: extracted/**/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
